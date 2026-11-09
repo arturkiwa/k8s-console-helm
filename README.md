@@ -61,8 +61,41 @@ W przeglądarce otwórz `http://<adres tej maszyny>:8080` i zaloguj się jako `v
 - Konsola domyślnie **tylko czyta**. Akcje operatora (restart, skalowanie, cordon) włączysz, dodając do
   `helm install` opcję `--set localCluster.allowMutations=true`.
 - Nazwa klastra w konsoli: `--set localCluster.name=<nazwa>`.
-- Brak dostępu do Docker Hub: przepisz obraz do rejestru wewnętrznego i dodaj
-  `--set image.repository=<rejestr>/k8s-console`.
+
+## Obraz przez Artifactory
+
+Gdy klaster pobiera obrazy przez Artifactory (proxy Docker Hub), w `values-single.yaml` zmień adres
+obrazu na adres w Artifactory, np.:
+
+```yaml
+image:
+  repository: artifactory.example.internal/docker-remote/arturkiwa/k8s-console
+  tag: "0.1.0"
+```
+
+Dokładny adres zależy od konfiguracji Artifactory (nazwa repozytorium zdalnego). Najłatwiej sprawdzić go
+tak, jak dla innych obrazów z Docker Hub pobieranych w Twoim środowisku: zamiast `docker.io/` jest
+prefiks Artifactory, a reszta (`arturkiwa/k8s-console`) zostaje.
+
+Jeśli Artifactory wymaga logowania przy pobieraniu, **przed** `helm install` utwórz Secret z danymi
+do Artifactory:
+
+```sh
+kubectl create namespace k8s-console
+kubectl -n k8s-console create secret docker-registry artifactory \
+  --docker-server=artifactory.example.internal \
+  --docker-username=<użytkownik> --docker-password=<hasło lub token>
+```
+
+i w `values-single.yaml` ustaw:
+
+```yaml
+imagePullSecrets:
+  - name: artifactory
+```
+
+Jeśli pod konsoli wisi w `ImagePullBackOff`, przyczynę pokaże
+`kubectl -n k8s-console describe pod -l app.kubernetes.io/name=k8s-console` (sekcja Events na dole).
 
 ## Usunięcie
 
