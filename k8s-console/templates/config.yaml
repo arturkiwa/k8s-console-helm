@@ -1,0 +1,52 @@
+{{- if eq .Values.mode "console" }}
+{{- if not (or .Values.localCluster.enabled .Values.remoteClusters) }}
+{{- fail "potrzebny co najmniej jeden klaster: localCluster.enabled albo remoteClusters" }}
+{{- end }}
+{{- if not .Values.identity.users }}
+{{- fail "identity.users: dodaj co najmniej jednego użytkownika (hash bcrypt: docker run --rm -i <obraz> hash-password)" }}
+{{- end }}
+{{- $clusters := list }}
+{{- with .Values.localCluster }}
+{{- if .enabled }}
+{{- $c := dict "name" .name "allowMutations" .allowMutations "credentials" (dict "type" "incluster") }}
+{{- $clusters = append $clusters (merge $c (include "kc.clusterExtras" . | fromJson)) }}
+{{- end }}
+{{- end }}
+{{- range .Values.remoteClusters }}
+{{- if not (and .name .server .tokenSecret) }}
+{{- fail "remoteClusters: każdy klaster wymaga name, server i tokenSecret" }}
+{{- end }}
+{{- if not (hasPrefix "https://" .server) }}
+{{- fail (printf "remoteClusters %s: server musi zaczynać się od https://" .name) }}
+{{- end }}
+{{- $dir := printf "/etc/k8s-console/clusters/%s" .name }}
+{{- $cred := dict "type" "token" "server" .server "tokenFile" (printf "%s/token" $dir) }}
+{{- $caKey := ternary "ca.crt" .caKey (kindIs "invalid" .caKey) }}
+{{- if $caKey }}{{ $_ := set $cred "caFile" (printf "%s/%s" $dir $caKey) }}{{ end }}
+{{- if .tlsServerName }}{{ $_ := set $cred "tlsServerName" .tlsServerName }}{{ end }}
+{{- $c := dict "name" .name "allowMutations" (default false .allowMutations) "credentials" $cred }}
+{{- $clusters = append $clusters (merge $c (include "kc.clusterExtras" . | fromJson)) }}
+{{- end }}
+{{- $users := list }}
+{{- range .Values.identity.users }}
+{{- if not (and .username .passwordHash) }}{{ fail "identity.users: username i passwordHash są wymagane" }}{{ end }}
+{{- if not (hasPrefix "$2" .passwordHash) }}{{ fail (printf "identity.users %s: passwordHash to nie hash bcrypt — wklej wynik hash-password (zaczyna się od $2a$10$)" .username) }}{{ end }}
+{{- $users = append $users (dict "username" .username "passwordHash" .passwordHash "groups" (default list .groups)) }}
+{{- end }}
+{{- $cfg := dict
+  "listen" "0.0.0.0:8080"
+  "session" (dict "ttl" .Values.session.ttl "secureCookie" (eq (include "kc.tls" .) "true"))
+  "identity" (dict "provider" "static" "prefix" (dict "user" .Values.identity.prefix "group" .Values.identity.prefix) "staticUsers" $users)
+  "clusters" $clusters
+  "history" (dict "disabled" (not .Values.history.enabled) "dataDir" "/data")
+}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "kc.fullname" . }}-config
+  labels: {{- include "kc.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  config.yaml: |
+    {{- toYaml $cfg | nindent 4 }}
+{{- end }}

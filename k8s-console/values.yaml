@@ -1,0 +1,119 @@
+# K8s Console — wartości chartu.
+#
+# Dwa tryby:
+#   mode: console — konsola (Deployment, Service, opcjonalnie Ingress / HTTPRoute) + RBAC na tym klastrze;
+#   mode: target  — tylko RBAC i ServiceAccount z tokenem na klastrze, którym konsola zarządza zdalnie
+#                   (bez podów). Token i CA z tego klastra trafiają do Secretu w klastrze konsoli.
+mode: console
+
+image:
+  repository: docker.io/arturkiwa/k8s-console
+  tag: "" # domyślnie appVersion chartu
+  digest: "" # sha256:… — przypięcie obrazu (zalecane); ma pierwszeństwo przed tagiem
+  pullPolicy: IfNotPresent
+imagePullSecrets: [] # [{ name: regcred }] — rejestr lustrzany / prywatny
+
+# ---- tożsamość użytkowników konsoli ----
+identity:
+  # prefiks nazw użytkowników i grup przy impersonacji (np. "kc:viewer", grupa "kc:poc-viewers") —
+  # chroni przed podszyciem się pod istniejące podmioty (system:*). Ten sam na wszystkich klastrach.
+  prefix: "kc:"
+  # Użytkownicy lokalni (PoC). Hash bcrypt: docker run --rm -i <obraz> hash-password
+  users: []
+  #  - { username: viewer, passwordHash: "$2a$10$…", groups: [poc-viewers] }
+  #  - { username: operator, passwordHash: "$2a$10$…", groups: [poc-operators] }
+
+session:
+  ttl: 8h
+  secureCookie: null # null = automatycznie: true, gdy Ingress / HTTPRoute z TLS; false dla samego HTTP
+
+# Grupy, pod które konsola może się podszywać (bez prefiksu), i ich uprawnienia (rbac.create).
+groups:
+  viewers: poc-viewers # odczyt (rola `view` + nody + metryki)
+  operators: poc-operators # odczyt + akcje: restart, skalowanie, cordon / drain, usuwanie podów…
+
+# ---- klastry ----
+# Klaster, na którym działa konsola (token ServiceAccountu poda).
+localCluster:
+  enabled: true
+  name: local
+  allowMutations: false # false = konsola odrzuca operacje zmieniające stan, niezależnie od RBAC
+  metrics: {} # opcjonalnie Prometheus / Thanos Query — patrz README
+  hubble: {} # opcjonalnie Hubble Relay (Cilium)
+
+# Klastry zdalne: API Server po HTTPS + token ServiceAccountu z `mode: target` na tamtym klastrze.
+remoteClusters: []
+#  - name: prod-a
+#    server: https://api.prod-a.example.internal:6443
+#    allowMutations: false
+#    tokenSecret: k8s-console-prod-a # Secret w namespace konsoli: klucze `token` i `ca.crt`
+#    caKey: ca.crt # "" = bez CA z Secretu: certyfikat API weryfikowany pulą systemową + trust.caBundle
+#    tlsServerName: "" # nazwa z certyfikatu API, gdy `server` to inny adres (VIP / IP)
+#    metrics: {}
+#    hubble: {}
+
+# ---- zaufane CA (własne CA organizacji) ----
+# Dokładane do systemowej puli CA dla wszystkich połączeń wychodzących: API Servery bez własnego CA,
+# Prometheus / Thanos, Hubble Relay. Wiele certyfikatów PEM można skleić w jeden blok.
+trust:
+  caBundle: ""
+  #  -----BEGIN CERTIFICATE-----
+  #  …
+  #  -----END CERTIFICATE-----
+  existingConfigMap: "" # albo ConfigMap z plikami PEM (wszystkie klucze trafiają do puli)
+
+# Dodatkowe Secrety montowane w /etc/k8s-console/secrets/<nazwa>/ — np. hasło do Prometheusa
+# (metrics.basicAuthPasswordFile: /etc/k8s-console/secrets/<nazwa>/<klucz>) albo certyfikaty Hubble.
+extraSecretMounts: []
+
+# Zmienne środowiskowe, np. proxy wyjściowe:
+#  - { name: HTTPS_PROXY, value: http://proxy.example.internal:3128 }
+#  - { name: NO_PROXY, value: .svc,.cluster.local,10.0.0.0/8 }
+extraEnv: []
+
+# ---- RBAC ----
+rbac:
+  create: true # ServiceAccount z prawem impersonacji + role dla grup
+  extendedRead: true # odczyt zasobów klastra spoza roli `view` (StorageClass, CRD, webhooki, Istio, Cilium…)
+  argocdRead: false # operatorzy: odczyt aplikacji ArgoCD (Historia: kto zarządza i jak synchronizuje)
+  rbacRead: false # operatorzy: odczyt ról i powiązań (Bezpieczeństwo: uprawnienia kont, „kto może”) — ujawnia model uprawnień
+  collector: true # historia zużycia z metrics-server (tożsamość <prefix>console-collector)
+
+serviceAccount:
+  name: "" # domyślnie <release>-impersonator
+
+# ---- historia zużycia (Rekomendacje bez Prometheusa) ----
+history:
+  enabled: true
+persistence:
+  enabled: true # false = emptyDir (historia ginie z podem)
+  size: 1Gi
+  storageClass: ""
+  existingClaim: ""
+
+# ---- wystawienie ----
+service:
+  type: ClusterIP # NodePort do szybkich testów bez Ingressu
+  port: 80
+  nodePort: null
+ingress:
+  enabled: false
+  className: ""
+  host: console.example.internal
+  annotations: {}
+  tls:
+    secretName: "" # Secret TLS z certyfikatem od CA organizacji; puste = bez TLS na Ingressie
+httpRoute: # Gateway API zamiast Ingressu
+  enabled: false
+  parentRefs: [] # [{ name: gateway, namespace: gateway-system, sectionName: https }]
+  hostnames: []
+  tls: true # czy brama kończy TLS (wpływa tylko na secureCookie)
+
+resources:
+  requests: { cpu: 50m, memory: 64Mi }
+  limits: { memory: 256Mi }
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}

@@ -1,0 +1,219 @@
+{{- if .Values.rbac.create }}
+{{- $fn := include "kc.fullname" . }}
+{{- $p := .Values.identity.prefix }}
+{{- $viewers := printf "%s%s" $p .Values.groups.viewers }}
+{{- $operators := printf "%s%s" $p .Values.groups.operators }}
+{{- $collector := printf "%sconsole-collector" $p }}
+# Tożsamość techniczna konsoli. Jedyne, co potrafi: podszyć się pod użytkownika konsoli z JEDNĄ
+# z wymienionych grup. Sama nie ma żadnych innych uprawnień.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "kc.sa" . }}
+  labels: {{- include "kc.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fn }}-impersonator
+  labels: {{- include "kc.labels" . | nindent 4 }}
+rules:
+  # Grupy ZAWSZE z listą resourceNames — bez niej konsola mogłaby podać "system:masters".
+  - apiGroups: [""]
+    resources: ["groups"]
+    verbs: ["impersonate"]
+    resourceNames: [{{ $viewers | quote }}, {{ $operators | quote }}{{ if .Values.rbac.collector }}, {{ $collector | quote }}{{ end }}]
+  # Użytkownicy: RBAC nie umie ograniczyć prefiksem. Uprawnienia biorą się z grup.
+  # Warunek: na klastrze nie ma bindingów do „gołych” nazw użytkowników z prefiksem konsoli.
+  - apiGroups: [""]
+    resources: ["users"]
+    verbs: ["impersonate"]
+  # Pola extra → Kubernetes Audit Log (korelacja z audytem konsoli)
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["userextras/console-session-id", "userextras/console-request-id"]
+    verbs: ["impersonate"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $fn }}-impersonator
+  labels: {{- include "kc.labels" . | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: {{ $fn }}-impersonator }
+subjects:
+  - { kind: ServiceAccount, name: {{ include "kc.sa" . }}, namespace: {{ .Release.Namespace }} }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fn }}-node-viewer
+  labels: {{- include "kc.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list"] # zużycie CPU/RAM (metrics-server)
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"] # strona etcd: rozmiar bazy, opóźnienia
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fn }}-operator
+  labels: {{- include "kc.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "patch", "update"] # cordon / uncordon
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "delete", "patch"]
+  - apiGroups: [""]
+    resources: ["pods/eviction"]
+    verbs: ["create"] # drain przez Eviction API (respektuje PDB)
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list", "patch"] # rollout restart
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale", "statefulsets/scale"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "patch"] # wstrzymanie / wznowienie
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "delete"] # „Uruchom teraz”
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"] # diagnoza Secretów; wartości na żądanie (audyt)
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list"]
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]
+{{- range $g, $roles := dict $viewers (list "view" (printf "%s-node-viewer" $fn)) $operators (list "view" (printf "%s-operator" $fn)) }}
+{{- range $roles }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ printf "%s-%s-%s" $fn (trimPrefix $p $g) (trimPrefix (printf "%s-" $fn) .) | trunc 63 | trimSuffix "-" }}
+  labels: {{- include "kc.labels" $ | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: {{ . }} }
+subjects: [{ kind: Group, name: {{ $g | quote }}, apiGroup: rbac.authorization.k8s.io }]
+{{- end }}
+{{- end }}
+{{- if .Values.rbac.extendedRead }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fn }}-extended-read
+  labels: {{- include "kc.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["persistentvolumes", "podtemplates"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses", "csidrivers", "csinodes", "csistoragecapacities", "volumeattachments", "volumeattributesclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingressclasses", "ipaddresses", "servicecidrs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["scheduling.k8s.io"]
+    resources: ["priorityclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["node.k8s.io"]
+    resources: ["runtimeclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apiregistration.k8s.io"]
+    resources: ["apiservices"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations", "validatingadmissionpolicies",
+                "validatingadmissionpolicybindings", "mutatingadmissionpolicies", "mutatingadmissionpolicybindings"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["flowcontrol.apiserver.k8s.io"]
+    resources: ["flowschemas", "prioritylevelconfigurations"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["resource.k8s.io"]
+    resources: ["deviceclasses", "resourceslices"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["gateway.networking.k8s.io", "networking.istio.io", "security.istio.io", "telemetry.istio.io",
+                "extensions.istio.io", "cilium.io", "ceph.rook.io", "objectbucket.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["cert-manager.io"]
+    resources: ["clusterissuers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["servicemonitors", "podmonitors", "probes", "prometheusrules", "prometheuses", "prometheusagents",
+                "alertmanagers", "thanosrulers", "scrapeconfigs"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $fn }}-extended-read
+  labels: {{- include "kc.labels" . | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: {{ $fn }}-extended-read }
+subjects:
+  - { kind: Group, name: {{ $viewers | quote }}, apiGroup: rbac.authorization.k8s.io }
+  - { kind: Group, name: {{ $operators | quote }}, apiGroup: rbac.authorization.k8s.io }
+{{- end }}
+{{- if .Values.rbac.collector }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fn }}-collector
+  labels: {{- include "kc.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $fn }}-collector
+  labels: {{- include "kc.labels" . | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: {{ $fn }}-collector }
+subjects: [{ kind: Group, name: {{ $collector | quote }}, apiGroup: rbac.authorization.k8s.io }]
+{{- end }}
+{{- range $name, $spec := dict "argocd-read" (list .Values.rbac.argocdRead "argoproj.io" "applications") "rbac-read" (list .Values.rbac.rbacRead "rbac.authorization.k8s.io" "roles,rolebindings,clusterroles,clusterrolebindings") }}
+{{- if index $spec 0 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fn }}-{{ $name }}
+  labels: {{- include "kc.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [{{ index $spec 1 | quote }}]
+    resources: {{ splitList "," (index $spec 2) | toJson }}
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $fn }}-{{ $name }}
+  labels: {{- include "kc.labels" $ | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: {{ $fn }}-{{ $name }} }
+subjects: [{ kind: Group, name: {{ $operators | quote }}, apiGroup: rbac.authorization.k8s.io }]
+{{- end }}
+{{- end }}
+{{- end }}

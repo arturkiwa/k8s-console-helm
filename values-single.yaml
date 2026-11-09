@@ -1,0 +1,21 @@
+# Konsola na jednym klastrze: ten sam plik na każdym klastrze, jedno polecenie helm install.
+# Instrukcja: README.md
+
+identity:
+  users:
+    # passwordHash: wynik polecenia z kroku 2 instrukcji (zaczyna się od $2a$10$)
+    - username: viewer # tylko podgląd
+      passwordHash: "WKLEJ-HASH"
+      groups: [poc-viewers]
+    - username: operator # podgląd + akcje (restart, skalowanie, cordon…), jeśli allowMutations: true
+      passwordHash: "WKLEJ-HASH"
+      groups: [poc-operators]
+
+localCluster:
+  name: klaster # nazwa widoczna w konsoli
+  allowMutations: false # true = konsola pozwala operatorowi na akcje zmieniające stan
+
+# Historia zużycia w pamięci poda (ginie przy restarcie) — nie wymaga StorageClass na klastrze.
+# Jeśli klaster ma domyślną StorageClass i chcesz zachować historię: enabled: true
+persistence:
+  enabled: false

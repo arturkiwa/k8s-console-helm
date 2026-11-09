@@ -1,0 +1,101 @@
+{{- if eq .Values.mode "console" }}
+{{- $caCM := .Values.trust.existingConfigMap | default (ternary (printf "%s-ca" (include "kc.fullname" .)) "" (ne .Values.trust.caBundle "")) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kc.fullname" . }}
+  labels: {{- include "kc.labels" . | nindent 4 }}
+spec:
+  replicas: 1 # sesje w pamięci + historia na wolumenie RWO → jedna replika
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {{- include "kc.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kc.selector" . | nindent 8 }}
+        {{- with .Values.podLabels }}{{ toYaml . | nindent 8 }}{{ end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+        checksum/ca: {{ .Values.trust.caBundle | sha256sum }}
+        {{- with .Values.podAnnotations }}{{ toYaml . | nindent 8 }}{{ end }}
+    spec:
+      serviceAccountName: {{ include "kc.sa" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 20 # zapis historii przy zamknięciu
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: console
+          image: {{ include "kc.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["-config", "/etc/k8s-console/config.yaml"]
+          ports: [{ name: http, containerPort: 8080 }]
+          env:
+            {{- if $caCM }}
+            # własne CA dołączane do systemowej puli (Go: SSL_CERT_DIR) — wszystkie połączenia wychodzące
+            - { name: SSL_CERT_DIR, value: /etc/k8s-console/ca }
+            {{- end }}
+            {{- with .Values.extraEnv }}{{ toYaml . | nindent 12 }}{{ end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          volumeMounts:
+            - { name: config, mountPath: /etc/k8s-console/config.yaml, subPath: config.yaml, readOnly: true }
+            - { name: data, mountPath: /data }
+            {{- if $caCM }}
+            - { name: ca, mountPath: /etc/k8s-console/ca, readOnly: true }
+            {{- end }}
+            {{- range .Values.remoteClusters }}
+            - { name: {{ printf "cl-%s" .name | trunc 63 | trimSuffix "-" }}, mountPath: /etc/k8s-console/clusters/{{ .name }}, readOnly: true }
+            {{- end }}
+            {{- range .Values.extraSecretMounts }}
+            - { name: {{ printf "sec-%s" . | trunc 63 | trimSuffix "-" }}, mountPath: /etc/k8s-console/secrets/{{ . }}, readOnly: true }
+            {{- end }}
+      volumes:
+        - name: config
+          secret: { secretName: {{ include "kc.fullname" . }}-config }
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim: { claimName: {{ .Values.persistence.existingClaim | default (printf "%s-data" (include "kc.fullname" .)) }} }
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if $caCM }}
+        - name: ca
+          configMap: { name: {{ $caCM }} }
+        {{- end }}
+        {{- range .Values.remoteClusters }}
+        - name: {{ printf "cl-%s" .name | trunc 63 | trimSuffix "-" }}
+          secret: { secretName: {{ .tokenSecret }} }
+        {{- end }}
+        {{- range .Values.extraSecretMounts }}
+        - name: {{ printf "sec-%s" . | trunc 63 | trimSuffix "-" }}
+          secret: { secretName: {{ . }} }
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
