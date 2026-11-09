@@ -4,13 +4,13 @@ Konsola webowa do Kubernetesa. Instalujesz ją na klastrze jednym poleceniem `he
 klaster, na którym działa. Każdy użytkownik konsoli ma takie uprawnienia, jakie nadaje mu RBAC klastra,
 a uprawnienia zakłada Helm.
 
-Obraz: `docker.io/arturkiwa/k8s-console:0.1.1`.
+Obraz: `docker.io/arturkiwa/k8s-console:0.2.0`.
 
 ## Co pobrać
 
-Z zakładki **Releases** (wersja `v0.1.1`) dwa pliki:
+Z zakładki **Releases** (wersja `v0.2.0`) dwa pliki:
 
-- `k8s-console-0.1.1.tgz` — chart Helm,
+- `k8s-console-0.2.0.tgz` — chart Helm,
 - `values-single.yaml` — ustawienia: użytkownicy i hasła.
 
 Oba pliki przenieś na maszynę, z której masz `kubectl` i `helm` do klastra.
@@ -24,7 +24,7 @@ Hash zrobisz jednym z poleceń (wpisz hasło, wynik zaczyna się od `$2`):
 
 ```sh
 htpasswd -nbBC 10 "" 'TwojeHaslo' | tr -d ':\n'; echo     # pakiet httpd-tools / apache2-utils
-docker run --rm -i docker.io/arturkiwa/k8s-console:0.1.1 hash-password   # albo tak, jeśli masz dockera
+docker run --rm -i docker.io/arturkiwa/k8s-console:0.2.0 hash-password   # albo tak, jeśli masz dockera
 ```
 
 Wklej hashe do `values-single.yaml` w miejsca `WKLEJ-HASH`. Do logowania używasz hasła, nie hasha.
@@ -35,7 +35,7 @@ Na klastrze, do którego jesteś podłączony (ten, który pokazuje `kubectl get
 uprawnienia cluster-admin.
 
 ```sh
-helm install k8s-console k8s-console-0.1.1.tgz -n k8s-console --create-namespace -f values-single.yaml
+helm install k8s-console k8s-console-0.2.0.tgz -n k8s-console --create-namespace -f values-single.yaml
 kubectl -n k8s-console rollout status deploy/k8s-console
 ```
 
@@ -70,7 +70,7 @@ obrazu na adres w Artifactory, np.:
 ```yaml
 image:
   repository: artifactory.example.internal/docker-remote/arturkiwa/k8s-console
-  tag: "0.1.1"
+  tag: "0.2.0"
 ```
 
 Dokładny adres zależy od konfiguracji Artifactory (nazwa repozytorium zdalnego). Najłatwiej sprawdzić go
@@ -96,6 +96,13 @@ imagePullSecrets:
 
 Jeśli pod konsoli wisi w `ImagePullBackOff`, przyczynę pokaże
 `kubectl -n k8s-console describe pod -l app.kubernetes.io/name=k8s-console` (sekcja Events na dole).
+
+## Kilka klastrów w jednej konsoli
+
+Zamiast konsoli na każdym klastrze: konsola na jednym klastrze, a na pozostałych mały **agent** z tego
+samego chartu. Agent sam łączy się do konsoli, więc na klastrach zdalnych nic nie trzeba wystawiać.
+Konsola potrzebuje wtedy adresu (Ingress), do którego agenty mają dostęp. Instrukcja krok po kroku:
+[k8s-console/README.md](k8s-console/README.md), sekcja „Jedna konsola, kilka klastrów (agent)”.
 
 ## Usunięcie
 

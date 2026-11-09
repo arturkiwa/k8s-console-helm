@@ -62,8 +62,8 @@ spec:
             {{- if $caCM }}
             - { name: ca, mountPath: /etc/k8s-console/ca, readOnly: true }
             {{- end }}
-            {{- range .Values.remoteClusters }}
-            - { name: {{ printf "cl-%s" .name | trunc 63 | trimSuffix "-" }}, mountPath: /etc/k8s-console/clusters/{{ .name }}, readOnly: true }
+            {{- if .Values.agents }}
+            - { name: agent-keys, mountPath: /etc/k8s-console/agent-keys, readOnly: true }
             {{- end }}
             {{- range .Values.extraSecretMounts }}
             - { name: {{ printf "sec-%s" . | trunc 63 | trimSuffix "-" }}, mountPath: /etc/k8s-console/secrets/{{ . }}, readOnly: true }
@@ -81,9 +81,9 @@ spec:
         - name: ca
           configMap: { name: {{ $caCM }} }
         {{- end }}
-        {{- range .Values.remoteClusters }}
-        - name: {{ printf "cl-%s" .name | trunc 63 | trimSuffix "-" }}
-          secret: { secretName: {{ .tokenSecret }} }
+        {{- if .Values.agents }}
+        - name: agent-keys
+          secret: { secretName: {{ include "kc.fullname" . }}-agent-keys }
         {{- end }}
         {{- range .Values.extraSecretMounts }}
         - name: {{ printf "sec-%s" . | trunc 63 | trimSuffix "-" }}

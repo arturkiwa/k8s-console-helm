@@ -2,8 +2,9 @@
 #
 # Dwa tryby:
 #   mode: console — konsola (Deployment, Service, opcjonalnie Ingress / HTTPRoute) + RBAC na tym klastrze;
-#   mode: target  — tylko RBAC i ServiceAccount z tokenem na klastrze, którym konsola zarządza zdalnie
-#                   (bez podów). Token i CA z tego klastra trafiają do Secretu w klastrze konsoli.
+#   mode: agent   — agent na klastrze zdalnym: sam łączy się do konsoli (wychodząco, HTTPS) i przekazuje
+#                   jej zapytania do lokalnego API, Prometheusa i Hubble. Na tym klastrze nic nie jest
+#                   wystawiane. Gotowe polecenie instalacji agenta wypisuje konsola po helm install / upgrade.
 mode: console
 
 image:
@@ -41,20 +42,19 @@ localCluster:
   metrics: {} # opcjonalnie Prometheus / Thanos Query — patrz README
   hubble: {} # opcjonalnie Hubble Relay (Cilium)
 
-# Klastry zdalne: API Server po HTTPS + token ServiceAccountu z `mode: target` na tamtym klastrze.
-remoteClusters: []
+# Klastry zdalne z agentem. Dla każdego chart generuje klucz agenta (Secret <release>-agent-keys,
+# zachowywany przy upgrade i po uninstall). Polecenie instalacji agenta: helm status / NOTES.
+agents: []
 #  - name: prod-a
-#    server: https://api.prod-a.example.internal:6443
 #    allowMutations: false
-#    tokenSecret: k8s-console-prod-a # Secret w namespace konsoli: klucze `token` i `ca.crt`
-#    caKey: ca.crt # "" = bez CA z Secretu: certyfikat API weryfikowany pulą systemową + trust.caBundle
-#    tlsServerName: "" # nazwa z certyfikatu API, gdy `server` to inny adres (VIP / IP)
-#    metrics: {}
-#    hubble: {}
+#    metrics: {} # tylko window, useForInsights, clusterSelector — adres i hasło Prometheusa podaje się agentowi
+
+# Adres konsoli, pod który łączą się agenty (https://…). Puste = z ingress.host / httpRoute.hostnames.
+publicURL: ""
 
 # ---- zaufane CA (własne CA organizacji) ----
-# Dokładane do systemowej puli CA dla wszystkich połączeń wychodzących: API Servery bez własnego CA,
-# Prometheus / Thanos, Hubble Relay. Wiele certyfikatów PEM można skleić w jeden blok.
+# Dokładane do systemowej puli CA dla wszystkich połączeń wychodzących: konsola → Prometheus / Thanos,
+# Hubble Relay; agent → adres konsoli (certyfikat Ingressu), Prometheus. Wiele certyfikatów PEM można skleić w jeden blok.
 trust:
   caBundle: ""
   #  -----BEGIN CERTIFICATE-----
@@ -117,3 +117,24 @@ tolerations: []
 affinity: {}
 podAnnotations: {}
 podLabels: {}
+
+# ---- mode: agent ----
+agent:
+  server: "" # adres konsoli, np. https://console.example.internal
+  cluster: "" # nazwa klastra — taka sama jak w `agents` konsoli
+  key: "" # klucz agenta z konsoli (gotowe polecenie wypisuje konsola)
+  existingSecret: "" # albo Secret z kluczem pod kluczem `key`
+  prometheus:
+    url: "" # np. http://prometheus-operated.monitoring.svc:9090 — pusto = bez Prometheusa
+    username: ""
+    passwordSecret: { name: "", key: password } # Secret z hasłem (w namespace agenta)
+  hubble:
+    address: "" # np. hubble-relay.kube-system.svc:80 — pusto = bez Hubble
+    tls:
+      enabled: false # Relay z TLS (Cilium: hubble.relay.tls.server.enabled)
+      secretName: "" # Secret w namespace agenta: ca.crt (+ tls.crt, tls.key dla mTLS)
+      clientCert: true # mTLS: certyfikat klienta z tls.crt / tls.key
+      serverName: "" # nazwa z certyfikatu Relay; Cilium: <cokolwiek>.hubble-relay.cilium.io
+  resources:
+    requests: { cpu: 20m, memory: 32Mi }
+    limits: { memory: 256Mi }

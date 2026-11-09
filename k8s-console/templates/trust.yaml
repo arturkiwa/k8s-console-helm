@@ -1,4 +1,4 @@
-{{- if and (eq .Values.mode "console") .Values.trust.caBundle (not .Values.trust.existingConfigMap) }}
+{{- if and .Values.trust.caBundle (not .Values.trust.existingConfigMap) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

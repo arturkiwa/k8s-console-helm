@@ -1,0 +1,133 @@
+{{- if eq .Values.mode "agent" }}
+{{- $a := .Values.agent }}
+{{- if not (and $a.server $a.cluster) }}{{ fail "mode: agent wymaga agent.server (adres konsoli) i agent.cluster (nazwa klastra w konsoli)" }}{{ end }}
+{{- if not (hasPrefix "https://" $a.server) }}{{ if not (hasPrefix "http://" $a.server) }}{{ fail "agent.server: pełny adres konsoli, np. https://console.example.internal" }}{{ end }}{{ end }}
+{{- if not (or $a.key $a.existingSecret) }}{{ fail "agent.key: klucz agenta z konsoli (polecenie wypisuje helm status konsoli) albo agent.existingSecret" }}{{ end }}
+{{- if not .Values.rbac.create }}{{ fail "mode: agent wymaga rbac.create: true (konto agenta z prawem impersonacji)" }}{{ end }}
+{{- $fn := include "kc.fullname" . }}
+{{- $caCM := .Values.trust.existingConfigMap | default (ternary (printf "%s-ca" $fn) "" (ne .Values.trust.caBundle "")) }}
+{{- $keySecret := $a.existingSecret | default (printf "%s-key" $fn) }}
+{{- if $a.key }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $keySecret }}
+  labels: {{- include "kc.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  key: {{ $a.key | quote }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fn }}
+  labels: {{- include "kc.labels" . | nindent 4 }}
+spec:
+  replicas: 1 # konsola trzyma jedno połączenie na klaster — druga replika zastępowałaby pierwszą
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {{- include "kc.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kc.selector" . | nindent 8 }}
+        {{- with .Values.podLabels }}{{ toYaml . | nindent 8 }}{{ end }}
+      annotations:
+        checksum/key: {{ $a.key | sha256sum }}
+        checksum/ca: {{ .Values.trust.caBundle | sha256sum }}
+        {{- with .Values.podAnnotations }}{{ toYaml . | nindent 8 }}{{ end }}
+    spec:
+      serviceAccountName: {{ include "kc.sa" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: agent
+          image: {{ include "kc.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - agent
+            - -server={{ $a.server }}
+            - -cluster={{ $a.cluster }}
+            - -key-file=/etc/k8s-console-agent/key/key
+            {{- with $a.prometheus }}
+            {{- if .url }}
+            - -prometheus-url={{ .url }}
+            {{- if .username }}
+            - -prometheus-user={{ .username }}
+            - -prometheus-password-file=/etc/k8s-console-agent/prometheus/{{ .passwordSecret.key }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- with $a.hubble.address }}
+            - -hubble={{ . }}
+            {{- end }}
+            {{- $htls := and $a.hubble.address $a.hubble.tls.enabled }}
+            {{- if $htls }}
+            - -hubble-tls
+            {{- if $a.hubble.tls.secretName }}
+            - -hubble-ca-file=/etc/k8s-console-agent/hubble/ca.crt
+            {{- if $a.hubble.tls.clientCert }}
+            - -hubble-cert-file=/etc/k8s-console-agent/hubble/tls.crt
+            - -hubble-key-file=/etc/k8s-console-agent/hubble/tls.key
+            {{- end }}
+            {{- end }}
+            {{- with $a.hubble.tls.serverName }}
+            - -hubble-server-name={{ . }}
+            {{- end }}
+            {{- end }}
+          env:
+            {{- if $caCM }}
+            # własne CA (np. certyfikat Ingressu konsoli) dołączane do systemowej puli
+            - { name: SSL_CERT_DIR, value: /etc/k8s-console/ca }
+            {{- end }}
+            {{- with .Values.extraEnv }}{{ toYaml . | nindent 12 }}{{ end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources: {{- toYaml $a.resources | nindent 12 }}
+          volumeMounts:
+            - { name: key, mountPath: /etc/k8s-console-agent/key, readOnly: true }
+            {{- if $caCM }}
+            - { name: ca, mountPath: /etc/k8s-console/ca, readOnly: true }
+            {{- end }}
+            {{- if and $a.prometheus.url $a.prometheus.username }}
+            - { name: prometheus, mountPath: /etc/k8s-console-agent/prometheus, readOnly: true }
+            {{- end }}
+            {{- if and $a.hubble.address $a.hubble.tls.enabled $a.hubble.tls.secretName }}
+            - { name: hubble-tls, mountPath: /etc/k8s-console-agent/hubble, readOnly: true }
+            {{- end }}
+      volumes:
+        - name: key
+          secret: { secretName: {{ $keySecret }} }
+        {{- if $caCM }}
+        - name: ca
+          configMap: { name: {{ $caCM }} }
+        {{- end }}
+        {{- if and $a.prometheus.url $a.prometheus.username }}
+        {{- if not $a.prometheus.passwordSecret.name }}{{ fail "agent.prometheus.username wymaga agent.prometheus.passwordSecret.name (hasło w Secrecie, nie w values)" }}{{ end }}
+        - name: prometheus
+          secret: { secretName: {{ $a.prometheus.passwordSecret.name }} }
+        {{- end }}
+        {{- if and $a.hubble.address $a.hubble.tls.enabled $a.hubble.tls.secretName }}
+        - name: hubble-tls
+          secret: { secretName: {{ $a.hubble.tls.secretName }} }
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

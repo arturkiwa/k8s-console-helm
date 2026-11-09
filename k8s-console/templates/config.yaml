@@ -1,6 +1,6 @@
 {{- if eq .Values.mode "console" }}
-{{- if not (or .Values.localCluster.enabled .Values.remoteClusters) }}
-{{- fail "potrzebny co najmniej jeden klaster: localCluster.enabled albo remoteClusters" }}
+{{- if not (or .Values.localCluster.enabled .Values.agents) }}
+{{- fail "potrzebny co najmniej jeden klaster: localCluster.enabled albo agents" }}
 {{- end }}
 {{- if not .Values.identity.users }}
 {{- fail "identity.users: dodaj co najmniej jednego użytkownika (hash bcrypt: docker run --rm -i <obraz> hash-password)" }}
@@ -12,20 +12,19 @@
 {{- $clusters = append $clusters (merge $c (include "kc.clusterExtras" . | fromJson)) }}
 {{- end }}
 {{- end }}
-{{- range .Values.remoteClusters }}
-{{- if not (and .name .server .tokenSecret) }}
-{{- fail "remoteClusters: każdy klaster wymaga name, server i tokenSecret" }}
-{{- end }}
-{{- if not (hasPrefix "https://" .server) }}
-{{- fail (printf "remoteClusters %s: server musi zaczynać się od https://" .name) }}
-{{- end }}
-{{- $dir := printf "/etc/k8s-console/clusters/%s" .name }}
-{{- $cred := dict "type" "token" "server" .server "tokenFile" (printf "%s/token" $dir) }}
-{{- $caKey := ternary "ca.crt" .caKey (kindIs "invalid" .caKey) }}
-{{- if $caKey }}{{ $_ := set $cred "caFile" (printf "%s/%s" $dir $caKey) }}{{ end }}
-{{- if .tlsServerName }}{{ $_ := set $cred "tlsServerName" .tlsServerName }}{{ end }}
-{{- $c := dict "name" .name "allowMutations" (default false .allowMutations) "credentials" $cred }}
-{{- $clusters = append $clusters (merge $c (include "kc.clusterExtras" . | fromJson)) }}
+{{- $seen := dict }}
+{{- if .Values.localCluster.enabled }}{{ $_ := set $seen .Values.localCluster.name true }}{{ end }}
+{{- range .Values.agents }}
+{{- if not .name }}{{ fail "agents: każdy klaster wymaga name" }}{{ end }}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" .name) }}{{ fail (printf "agents %s: nazwa tylko z małych liter, cyfr i '-'" .name) }}{{ end }}
+{{- if hasKey $seen .name }}{{ fail (printf "agents %s: nazwa klastra powtórzona" .name) }}{{ end }}
+{{- $_ := set $seen .name true }}
+{{- with .metrics }}{{ if or .prometheusURL .basicAuthUsername .bearerTokenFile .caFile }}
+{{- fail "agents: adres i hasło Prometheusa podaje się agentowi (agent.prometheus), w konsoli tylko window / useForInsights / clusterSelector" }}
+{{- end }}{{ end }}
+{{- $c := dict "name" .name "allowMutations" (default false .allowMutations) "credentials" (dict "type" "agent" "agentKeyFile" (printf "/etc/k8s-console/agent-keys/%s" .name)) }}
+{{- if .metrics }}{{ $_ := set $c "metrics" .metrics }}{{ end }}
+{{- $clusters = append $clusters $c }}
 {{- end }}
 {{- $users := list }}
 {{- range .Values.identity.users }}

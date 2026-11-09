@@ -1,0 +1,18 @@
+{{- if and (eq .Values.mode "console") .Values.agents }}
+{{- $name := printf "%s-agent-keys" (include "kc.fullname" .) }}
+{{- $old := (lookup "v1" "Secret" .Release.Namespace $name).data | default dict }}
+# Klucze agentów klastrów zdalnych: generowane raz, zachowywane przy upgrade i po uninstall.
+# Unieważnienie klucza: usuń klaster z `agents` (klucz znika z Secretu) i zrób helm upgrade.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  labels: {{- include "kc.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+data:
+  {{- range .Values.agents }}
+  {{ .name }}: {{ index $old .name | default (randAlphaNum 48 | b64enc) }}
+  {{- end }}
+{{- end }}
