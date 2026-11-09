@@ -5,6 +5,12 @@
 {{- if not (or $a.key $a.existingSecret) }}{{ fail "agent.key: klucz agenta z konsoli (polecenie wypisuje helm status konsoli) albo agent.existingSecret" }}{{ end }}
 {{- if not .Values.rbac.create }}{{ fail "mode: agent wymaga rbac.create: true (konto agenta z prawem impersonacji)" }}{{ end }}
 {{- $fn := include "kc.fullname" . }}
+{{- /* agent.prometheus=<adres> (skrót) = agent.prometheus.url; passwordSecret=<nazwa> = passwordSecret.name */}}
+{{- $prom := $a.prometheus | default dict }}
+{{- if kindIs "string" $prom }}{{ $prom = dict "url" $prom }}{{ end }}
+{{- $ps := $prom.passwordSecret | default dict }}
+{{- if kindIs "string" $ps }}{{ $ps = dict "name" $ps }}{{ end }}
+{{- $prom = dict "url" ($prom.url | default "") "username" ($prom.username | default "") "passwordSecret" (dict "name" ($ps.name | default "") "key" ($ps.key | default "password")) }}
 {{- $caCM := .Values.trust.existingConfigMap | default (ternary (printf "%s-ca" $fn) "" (ne .Values.trust.caBundle "")) }}
 {{- $keySecret := $a.existingSecret | default (printf "%s-key" $fn) }}
 {{- if $a.key }}
@@ -57,7 +63,7 @@ spec:
             - -server={{ $a.server }}
             - -cluster={{ $a.cluster }}
             - -key-file=/etc/k8s-console-agent/key/key
-            {{- with $a.prometheus }}
+            {{- with $prom }}
             {{- if .url }}
             - -prometheus-url={{ .url }}
             {{- if .username }}
@@ -99,7 +105,7 @@ spec:
             {{- if $caCM }}
             - { name: ca, mountPath: /etc/k8s-console/ca, readOnly: true }
             {{- end }}
-            {{- if and $a.prometheus.url $a.prometheus.username }}
+            {{- if and $prom.url $prom.username }}
             - { name: prometheus, mountPath: /etc/k8s-console-agent/prometheus, readOnly: true }
             {{- end }}
             {{- if and $a.hubble.address $a.hubble.tls.enabled $a.hubble.tls.secretName }}
@@ -112,10 +118,10 @@ spec:
         - name: ca
           configMap: { name: {{ $caCM }} }
         {{- end }}
-        {{- if and $a.prometheus.url $a.prometheus.username }}
-        {{- if not $a.prometheus.passwordSecret.name }}{{ fail "agent.prometheus.username wymaga agent.prometheus.passwordSecret.name (hasło w Secrecie, nie w values)" }}{{ end }}
+        {{- if and $prom.url $prom.username }}
+        {{- if not $prom.passwordSecret.name }}{{ fail "agent.prometheus.username wymaga agent.prometheus.passwordSecret.name (hasło w Secrecie, nie w values)" }}{{ end }}
         - name: prometheus
-          secret: { secretName: {{ $a.prometheus.passwordSecret.name }} }
+          secret: { secretName: {{ $prom.passwordSecret.name }} }
         {{- end }}
         {{- if and $a.hubble.address $a.hubble.tls.enabled $a.hubble.tls.secretName }}
         - name: hubble-tls

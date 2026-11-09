@@ -27,28 +27,22 @@ Podgląd: kubectl -n {{ .Release.Namespace }} port-forward svc/{{ $fn }} 8080:{{
 {{- if and (not $url) .Values.ingress.enabled }}{{ $url = printf "http%s://%s" (ternary "s" "" (ne .Values.ingress.tls.secretName "")) .Values.ingress.host }}{{ end }}
 {{- if and (not $url) .Values.httpRoute.enabled .Values.httpRoute.hostnames }}{{ $url = printf "https://%s" (first .Values.httpRoute.hostnames) }}{{ end }}
 {{- $url = $url | default "<ADRES-KONSOLI>" }}
-{{- $base := printf "helm install k8s-console-agent ./k8s-console -n %s --create-namespace --set mode=agent --set agent.server=%s --set image.repository=%s --set image.tag=%s --set identity.prefix=%s --set groups.viewers=%s --set groups.operators=%s" .Release.Namespace $url .Values.image.repository (default .Chart.AppVersion .Values.image.tag) .Values.identity.prefix .Values.groups.viewers .Values.groups.operators }}
-{{- range $i, $ps := .Values.imagePullSecrets }}{{ $base = printf "%s --set imagePullSecrets[%d].name=%s" $base $i $ps.name }}{{ end }}
 
-Agent na klastrze zdalnym — dla każdego klastra dwa kroki:
-  1. Tutaj (kubectl na klastrze konsoli) wypisz gotowe polecenie instalacji. Zawiera klucz agenta —
-     nie zapisuj go w repozytorium.
-  2. Uruchom wypisane polecenie z kubectl przełączonym na klaster zdalny, w katalogu z tym samym chartem.
-{{- if .Values.imagePullSecrets }}
-     Secret do rejestru ({{ range .Values.imagePullSecrets }}{{ .name }} {{ end }}) musi istnieć też w namespace {{ .Release.Namespace }} klastra zdalnego.
-{{- end }}
+Klastry zdalne (agent). Dla każdego klastra:
 {{- range .Values.agents }}
 
-  {{ .name }}:
-  kubectl -n {{ $.Release.Namespace }} get secret {{ $fn }}-agent-keys -o go-template='{{ $base }} --set agent.cluster={{ .name }} --set agent.key={{ "{{" }}index .data "{{ .name }}" | base64decode{{ "}}" }}{{ "{{" }}"\n"{{ "}}" }}'
+  {{ .name }}
+  A) Na TYM klastrze (konsoli) wypisz klucz agenta — jedna linia znaków:
+       kubectl -n {{ $.Release.Namespace }} get secret {{ $fn }}-agent-keys -o jsonpath='{.data.{{ .name }}}' | base64 -d; echo
+  B) Na klastrze {{ .name }}, w katalogu z chartem k8s-console i tym samym values:
+       helm install k8s-console-agent ./k8s-console -n {{ $.Release.Namespace }} --create-namespace -f values-single.yaml \
+         --set mode=agent --set agent.server={{ $url }} --set agent.cluster={{ .name }} --set agent.key=<KLUCZ Z A>
 {{- end }}
 {{- if eq $url "<ADRES-KONSOLI>" }}
 
-Uwaga: konsola nie jest wystawiona (Ingress / HTTPRoute) — agenty muszą mieć adres, pod który się połączą.
-Ustaw publicURL albo podmień <ADRES-KONSOLI> w poleceniu.
+Uwaga: konsola nie jest wystawiona (ingress / httpRoute) — agenty nie mają dokąd się połączyć.
 {{- end }}
-Prometheus / Hubble klastra zdalnego: dopisz do polecenia np.
-  --set agent.prometheus.url=http://prometheus.monitoring.svc:9090 --set agent.hubble.address=hubble-relay.kube-system.svc:80
+
 Stan agentów: strona startowa konsoli.
 {{- end }}
 

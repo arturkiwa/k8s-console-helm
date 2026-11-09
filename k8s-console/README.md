@@ -30,82 +30,84 @@ zalogowanego użytkownika), w Prometheusie i w Hubble Relay.
 
 ### Krok po kroku
 
-Potrzebujesz: katalogu z chartem (`k8s-console/`) i `values-single.yaml` z wklejonymi hashami — tych
-samych co przy instalacji konsoli — oraz `kubectl` i `helm` z dostępem do obu klastrów.
+Wszystko robisz z jednej maszyny (np. bastionu), w katalogu, w którym leżą rozpakowany chart
+`k8s-console/` i Twój `values-single.yaml` (ten z hashami haseł). Tych samych dwóch rzeczy używasz na
+klastrze głównym i na klastrach zdalnych.
 
-**1. Konsola musi mieć adres osiągalny z klastrów zdalnych.** Agent łączy się do konsoli, więc konsola
-potrzebuje Ingressu (albo HTTPRoute). Dopisz do `values-single.yaml`:
+**0. `values-single.yaml`.** Ustaw `image.tag` na wersję chartu. Dopisz adres konsoli (agenty łączą
+się pod ten adres) i nazwy klastrów zdalnych:
 
 ```yaml
 ingress:
   enabled: true
-  className: nginx # klasa Ingressu na klastrze konsoli
-  host: konsola.example.internal # nazwa z DNS
-  tls: { secretName: konsola-tls } # Secret z certyfikatem (w namespace k8s-console); bez TLS: usuń linię
-```
-
-**2. Dopisz klastry zdalne** do `values-single.yaml`. Nazwy są dowolne; tak będą widoczne w konsoli:
-
-```yaml
+  className: nginx # klasa Ingressu na klastrze głównym (kubectl get ingressclass)
+  host: konsola.twoja-domena
 agents:
-  - name: klaster-b
-  - name: klaster-c
+  - name: klaster-b # nazwa dowolna, tak będzie widoczna w konsoli
 ```
 
-**3. Zaktualizuj konsolę** (kubectl ustawiony na klaster konsoli):
+**A. Klaster GŁÓWNY** (kubectl ustawiony na klaster główny)
+
+A1. Zainstaluj albo zaktualizuj konsolę. Helm tworzy przy tym klucz agenta dla każdego klastra z `agents`:
 
 ```sh
-helm upgrade k8s-console ./k8s-console -n k8s-console -f values-single.yaml
+helm upgrade --install k8s-console ./k8s-console -n k8s-console --create-namespace -f values-single.yaml
 ```
 
-Na końcu wyniku (sekcja NOTES) jest dla każdego klastra jedno polecenie zaczynające się od
-`kubectl -n k8s-console get secret …`. Wynik można zobaczyć ponownie: `helm status k8s-console -n k8s-console`.
+A2. Wypisz klucz agenta dla `klaster-b` (jedna linia znaków — skopiuj ją):
 
-**4. Uruchom to polecenie** (nadal na klastrze konsoli). Nic nie zmienia — tylko wypisuje jedną linię
-`helm install k8s-console-agent …` z adresem konsoli, nazwą klastra i kluczem agenta. Klucz jest hasłem
-agenta: nie zapisuj go w repozytorium.
+```sh
+kubectl -n k8s-console get secret k8s-console-agent-keys -o jsonpath='{.data.klaster-b}' | base64 -d; echo
+```
 
-**5. Przełącz kubectl na klaster zdalny** (jak zwykle się do niego łączysz) i w katalogu, w którym
-leży `k8s-console/`, wklej wypisaną linię. Linia zakłada rozpakowany chart w katalogu `k8s-console`;
-jeśli masz tylko plik `.tgz`, zamień w niej `./k8s-console` na nazwę pliku (np. `k8s-console-0.2.0.tgz`). Jeśli obraz idzie przez Artifactory z logowaniem, Secret do
-rejestru musi istnieć także w namespace `k8s-console` na klastrze zdalnym.
+**B. Klaster ZDALNY `klaster-b`** (przełącz kubectl na ten klaster)
 
-**6. Sprawdź** stronę startową konsoli: kafel klastra pokazuje „przez agenta · połączony …”. Gdy jest
-„agent rozłączony”, przyczyna jest w logu agenta (na klastrze zdalnym):
+B1. Zainstaluj agenta. W miejsce `WKLEJ-KLUCZ` wklej linię z A2:
+
+```sh
+helm install k8s-console-agent ./k8s-console -n k8s-console --create-namespace -f values-single.yaml \
+  --set mode=agent \
+  --set agent.server=https://konsola.twoja-domena \
+  --set agent.cluster=klaster-b \
+  --set agent.key=WKLEJ-KLUCZ
+```
+
+Dopisz do tego polecenia, jeśli potrzebne:
+
+- certyfikat Ingressu konsoli jest od CA organizacji:
+  `--set-file trust.caBundle=/etc/pki/tls/certs/ca-bundle.crt` (RHEL; Debian / Ubuntu:
+  `/etc/ssl/certs/ca-certificates.crt`) — plik zaufanych CA z maszyny, na której `curl https://konsola.twoja-domena/healthz` działa;
+- Prometheus na tym klastrze (adres: `kubectl get svc -A | grep -i prometheus` → `http://<nazwa>.<namespace>.svc:<port>`):
+  `--set agent.prometheus.url=http://<nazwa>.<namespace>.svc:<port>`; z hasłem najpierw
+  `kubectl create namespace k8s-console` i
+  `kubectl -n k8s-console create secret generic prometheus-haslo --from-literal=password='<hasło>'`,
+  potem dopisz `--set agent.prometheus.username=<użytkownik> --set agent.prometheus.passwordSecret.name=prometheus-haslo`;
+- Hubble (Cilium): `--set agent.hubble.address=hubble-relay.kube-system.svc:80`.
+
+Jeśli Artifactory wymaga logowania, Secret do rejestru musi istnieć w namespace `k8s-console` także na
+tym klastrze (utwórz go przed B1, tak jak przy konsoli).
+
+B2. Sprawdź log agenta — ma być `agent: połączony z konsolą`:
 
 ```sh
 kubectl -n k8s-console logs deploy/k8s-console-agent
 ```
 
+Zmiana ustawień agenta później (np. dopisanie CA): `helm upgrade k8s-console-agent ./k8s-console
+-n k8s-console --reuse-values --set …` — `--reuse-values` zostawia klucz i resztę ustawień.
+
+**C. Przeglądarka:** na stronie startowej konsoli kafel `klaster-b` — „przez agenta · połączony”.
+
 | W logu agenta | Co zrobić |
 |---|---|
-| `konsola nie zna tego klastra albo klucz agenta jest inny` | klaster nie jest w `agents` konsoli albo wklejony klucz jest z innej instalacji — powtórz kroki 3–5 |
-| `certificate signed by unknown authority` (z podpowiedzią o CA) | certyfikat Ingressu konsoli jest od CA organizacji — dopisz `--set-file trust.caBundle=ca.pem` do polecenia agenta |
-| `no such host`, `connection refused`, `timeout` | klaster zdalny nie ma drogi do adresu konsoli (DNS, firewall); przez proxy: `extraEnv` z `HTTPS_PROXY` |
-| `pod tym adresem nie ma konsoli z obsługą agentów` | zły `agent.server` albo konsola w starej wersji |
-
-Gdy konsola i agent są w różnych wersjach, kafel pokazuje „inna wersja agenta”: zainstaluj agenta
-w wersji konsoli (`helm upgrade k8s-console-agent …` z tym samym chartem).
-
-### Prometheus i Hubble klastra zdalnego (opcjonalnie)
-
-Dopisz do linii z kroku 5:
-
-- Prometheus (rekomendacje z historii, ruch Istio, zajętość wolumenów):
-  `--set agent.prometheus.url=http://<usługa>.<namespace>.svc:<port>`. Z hasłem: najpierw na klastrze
-  zdalnym `kubectl -n k8s-console create secret generic prometheus-haslo --from-literal=password=<hasło>`,
-  potem `--set agent.prometheus.username=<użytkownik> --set agent.prometheus.passwordSecret.name=prometheus-haslo`.
-- Hubble (strona Ruch, Cilium): `--set agent.hubble.address=hubble-relay.kube-system.svc:80`.
-  Relay z TLS (Cilium `hubble.relay.tls.server.enabled`): przekopiuj certyfikat klienta Hubble do
-  Secretu w namespace `k8s-console` (klucze `ca.crt`, `tls.crt`, `tls.key`) i dopisz
-  `--set agent.hubble.address=hubble-relay.kube-system.svc:443 --set agent.hubble.tls.enabled=true
-  --set agent.hubble.tls.secretName=<secret> --set agent.hubble.tls.serverName=agent.hubble-relay.cilium.io`.
-
-Konsola pokazuje te strony dla klastra dopiero wtedy, gdy agent zgłosi, że ma dane źródło.
+| `konsola nie zna tego klastra albo klucz agenta jest inny` | nazwa w `agent.cluster` inna niż w `agents` albo klucz z innej instalacji — powtórz A2 i B1 |
+| błąd certyfikatu (nieznane CA) | dopisz `trust.caBundle` (wyżej) przez `helm upgrade … --reuse-values` |
+| `nie dotarła do konsoli`, `innym protokołem`, `403` | Ingress przepuszcza tylko WebSocket — konsola i agent muszą być w wersji ≥ 0.2.1 |
+| `no such host`, `connection refused`, `timeout` | klaster zdalny nie ma drogi do adresu konsoli (DNS, firewall) |
 
 ### Dodanie i usunięcie klastra
 
-Nowy klaster: dopisz go do `agents` i powtórz kroki 3–6. Usunięcie klastra z `agents` i `helm upgrade`
+Nowy klaster: dopisz go do `agents` i powtórz A1, A2, B1, B2. Usunięcie klastra z `agents` i `helm upgrade`
 konsoli unieważnia jego klucz; na klastrze zdalnym: `helm uninstall k8s-console-agent -n k8s-console`.
 
 Agent ma tylko prawo podszywania się pod grupy konsoli (`<prefiks><grupa>`) i role dla tych grup, tak
