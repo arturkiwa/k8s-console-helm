@@ -110,8 +110,8 @@ httpRoute: # Gateway API zamiast Ingressu
   tls: true # czy brama kończy TLS (wpływa tylko na secureCookie)
 
 resources:
-  requests: { cpu: 50m, memory: 64Mi }
-  limits: { memory: 256Mi }
+  requests: { cpu: 50m, memory: 128Mi }
+  limits: { memory: 512Mi } # duży klaster (tysiące podów): 1Gi; konsola sama trzyma się ~85% limitu
 nodeSelector: {}
 tolerations: []
 affinity: {}

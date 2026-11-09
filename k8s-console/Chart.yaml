@@ -2,7 +2,7 @@ apiVersion: v2
 name: k8s-console
 description: Konsola webowa do wielu klastrów Kubernetes — impersonacja użytkownika, bez agentów na klastrach.
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.1.1
+appVersion: "0.1.1"
 kubeVersion: ">=1.27.0-0"
 keywords: [kubernetes, console, dashboard, multi-cluster]

@@ -24,7 +24,7 @@ persistence:
 # w Artifactory, np.: artifactory.example.internal/docker-remote/arturkiwa/k8s-console
 image:
   repository: docker.io/arturkiwa/k8s-console
-  tag: "0.1.0"
+  tag: "0.1.1"
 
 # Jeśli Artifactory wymaga logowania przy pobieraniu: utwórz Secret (README → „Obraz przez Artifactory”)
 # i odkomentuj:
