@@ -102,7 +102,7 @@ Zmiana ustawień agenta później (np. dopisanie CA): `helm upgrade k8s-console-
 |---|---|
 | `konsola nie zna tego klastra albo klucz agenta jest inny` | nazwa w `agent.cluster` inna niż w `agents` albo klucz z innej instalacji — powtórz A2 i B1 |
 | błąd certyfikatu (nieznane CA) | dopisz `trust.caBundle` (wyżej) przez `helm upgrade … --reuse-values` |
-| `nie dotarła do konsoli`, `innym protokołem`, `403` | Ingress przepuszcza tylko WebSocket — konsola i agent muszą być w wersji ≥ 0.2.1 |
+| `nie dotarła do konsoli`, `innym protokołem`, `403`, `426` | konsola i agent w różnych wersjach albo starsze niż 0.2.2 — zaktualizuj oba; od 0.2.2 agent sam omija Ingress, który nie przepuszcza WebSocket |
 | `no such host`, `connection refused`, `timeout` | klaster zdalny nie ma drogi do adresu konsoli (DNS, firewall) |
 
 ### Dodanie i usunięcie klastra
@@ -123,7 +123,8 @@ jak konsola na swoim klastrze. Każde połączenie, odrzucenie i rozłączenie a
 - Konsola i agent nie mają opcji pominięcia weryfikacji certyfikatu.
 - **Proxy wyjściowe**: `extraEnv` z `HTTPS_PROXY` i `NO_PROXY`. Usługi w klastrze (`.svc`) i adres API
   wpisz do `NO_PROXY`.
-- Połączenie agenta przechodzi przez Ingress jak WebSocket (nagłówek `Upgrade`). Agent i konsola co
+- Połączenie agenta przechodzi przez Ingress jako WebSocket, a gdy Ingress go nie przepuszcza — sam
+  przechodzi na zwykłe zapytania HTTP (bez żadnych adnotacji). Agent i konsola co
   20–30 s sprawdzają, czy połączenie żyje, więc bezczynne połączenia nie są zamykane przez load balancer.
 
 ## Prometheus, Hubble na klastrze konsoli
