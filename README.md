@@ -4,13 +4,13 @@ Konsola webowa do Kubernetesa. Instalujesz ją na klastrze jednym poleceniem `he
 klaster, na którym działa. Każdy użytkownik konsoli ma takie uprawnienia, jakie nadaje mu RBAC klastra,
 a uprawnienia zakłada Helm.
 
-Obraz: `docker.io/arturkiwa/k8s-console:0.2.10`.
+Obraz: `docker.io/arturkiwa/k8s-console:0.2.11`.
 
 ## Co pobrać
 
-Z zakładki **Releases** (wersja `v0.2.10`) dwa pliki:
+Z zakładki **Releases** (wersja `v0.2.11`) dwa pliki:
 
-- `k8s-console-0.2.10.tgz` — chart Helm,
+- `k8s-console-0.2.11.tgz` — chart Helm,
 - `values-single.yaml` — ustawienia: użytkownicy i hasła.
 
 Oba pliki przenieś na maszynę, z której masz `kubectl` i `helm` do klastra.
@@ -24,7 +24,7 @@ Hash zrobisz jednym z poleceń (wpisz hasło, wynik zaczyna się od `$2`):
 
 ```sh
 htpasswd -nbBC 10 "" 'TwojeHaslo' | tr -d ':\n'; echo     # pakiet httpd-tools / apache2-utils
-docker run --rm -i docker.io/arturkiwa/k8s-console:0.2.10 hash-password   # albo tak, jeśli masz dockera
+docker run --rm -i docker.io/arturkiwa/k8s-console:0.2.11 hash-password   # albo tak, jeśli masz dockera
 ```
 
 Wklej hashe do `values-single.yaml` w miejsca `WKLEJ-HASH`. Do logowania używasz hasła, nie hasha.
@@ -35,7 +35,7 @@ Na klastrze, do którego jesteś podłączony (ten, który pokazuje `kubectl get
 uprawnienia cluster-admin.
 
 ```sh
-helm install k8s-console k8s-console-0.2.10.tgz -n k8s-console --create-namespace -f values-single.yaml
+helm install k8s-console k8s-console-0.2.11.tgz -n k8s-console --create-namespace -f values-single.yaml
 kubectl -n k8s-console rollout status deploy/k8s-console
 ```
 
@@ -70,7 +70,7 @@ obrazu na adres w Artifactory, np.:
 ```yaml
 image:
   repository: artifactory.example.internal/docker-remote/arturkiwa/k8s-console
-  tag: "0.2.10"
+  tag: "0.2.11"
 ```
 
 Dokładny adres zależy od konfiguracji Artifactory (nazwa repozytorium zdalnego). Najłatwiej sprawdzić go
