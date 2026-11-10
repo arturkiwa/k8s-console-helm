@@ -38,6 +38,7 @@
   "identity" (dict "provider" "static" "prefix" (dict "user" .Values.identity.prefix "group" .Values.identity.prefix) "staticUsers" $users)
   "clusters" $clusters
   "history" (dict "disabled" (not .Values.history.enabled) "dataDir" "/data")
+  "insights" (dict "dailyAt" (default "02:00" (.Values.insights).dailyAt))
 }}
 apiVersion: v1
 kind: Secret

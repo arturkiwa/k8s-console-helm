@@ -85,6 +85,9 @@ serviceAccount:
 # ---- historia zużycia (Rekomendacje bez Prometheusa) ----
 history:
   enabled: true
+# ---- Rekomendacje: historia z Prometheusa / Thanosa liczona raz na dobę w tle (i „Przelicz teraz”) ----
+insights:
+  dailyAt: "02:00" # HH:MM, strefa czasowa kontenera (zwykle UTC); wynik w /data (persistence)
 persistence:
   enabled: true # false = emptyDir (historia ginie z podem)
   size: 1Gi

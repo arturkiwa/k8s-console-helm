@@ -144,6 +144,11 @@ localCluster:
 
 Dla klastrów z agentem w konsoli zostają tylko `agents[].metrics.window` i `useForInsights`.
 
+Rekomendacje nie odpytują Prometheusa przy wejściu na stronę. Historia (domyślnie 7 dni) liczy się w tle
+raz na dobę o `insights.dailyAt` (domyślnie `"02:00"`, strefa kontenera — zwykle UTC), namespace po
+namespace, i zostaje w `/data` (`persistence`). Na stronie jest też przycisk „Przelicz teraz”. Pierwsze
+liczenie startuje po uruchomieniu konsoli; do jego końca liczby są z historii konsoli albo metrics-server.
+
 ## Opcjonalne uprawnienia
 
 | Wartość | Daje | Domyślnie |
